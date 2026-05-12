@@ -116,31 +116,53 @@ Return non-nil if an actual update occurred, not counting content."
              count (not (equal part-a part-b))
              do (setf (aref a i) part-b)))))
 
-(defun elfeed-db-get-feed (id)
-  "Get/create the feed for ID."
-  (elfeed-db-ensure)
-  (with-memoization (gethash id elfeed-db-feeds)
-    (elfeed-feed--create :id id)))
+(defmacro elfeed-db--defgeneric (name name-1 args doc-string)
+  "Declare a generic database function.
 
-(defun elfeed-db-get-entry (id)
-  "Get the entry for ID."
-  (elfeed-db-ensure)
-  (gethash id elfeed-db-entries))
+NAME is the name for the function that can be called without the DB
+argument.  NAME-1 is the name of the generic function that only modifies
+the passed in DB variable.  ARGS is the argument list of NAME
+function.  DOC-STRING is the doc-string shared between the 2
+functions."
+  (declare (indent 3)
+           (doc-string 4))
+  `(progn
+     (defun ,name ,args
+       ,doc-string
+       (elfeed-db-ensure)
+       (,name-1 elfeed-db ,@args))
+     (cl-defgeneric ,name-1 ,(cons 'db args)
+       ,(concat doc-string "
+Argument DB is the database type to modify."))))
+
+(elfeed-db--defgeneric elfeed-db-get-feed elfeed-db-get-feed-1 (id)
+  "Get/create the feed for ID.")
+
+(elfeed-db--defgeneric elfeed-db-get-entry elfeed-db-get-entry-1 (id)
+  "Get the entry for ID.")
 
 (defun elfeed-db-compare (a b)
   "Return non-nil if entry A is newer than entry B."
-  (let* ((entry-a (elfeed-db-get-entry a))
-         (entry-b (elfeed-db-get-entry b))
+  (elfeed-db-ensure)
+  (let* ((entry-a (elfeed-db-get-entry elfeed-db a))
+         (entry-b (elfeed-db-get-entry elfeed-db b))
          (date-a (elfeed-entry-date entry-a))
          (date-b (elfeed-entry-date entry-b)))
     (if (= date-a date-b)
         (string< (prin1-to-string b) (prin1-to-string a))
       (> date-a date-b))))
 
+(cl-defgeneric elfeed-db-set-update-time-1 (db)
+  "Update the database last-update time in DB.")
+
 (defun elfeed-db-set-update-time ()
   "Update the database last-update time."
-  (setf elfeed-db (plist-put elfeed-db :last-update (float-time)))
+  (elfeed-db-ensure)
+  (elfeed-db-set-update-time-1 elfeed-db)
   (run-hooks 'elfeed-db-update-hook))
+
+(elfeed-db--defgeneric elfeed-db-add elfeed-db-add-1 (entries)
+  "Add ENTRIES to the database.")
 
 (defun elfeed-db-add (entries)
   "Add ENTRIES to the database."
@@ -374,9 +396,16 @@ Runs `elfeed-db-unload-hook' after unloading the database."
         elfeed-db-index nil)
   (run-hooks 'elfeed-db-unload-hook))
 
+(cl-defgeneric elfeed-db-loaded-p (db)
+  "Return non-nil if DB has been loaded already.
+
+Once `elfeed-db-load-1' is called on DB, this function should always
+return t.")
+
 (defun elfeed-db-ensure ()
   "Ensure that the database has been loaded."
-  (unless elfeed-db (elfeed-db-load)))
+  (unless (elfeed-db-loaded-p elfeed-db)
+    (elfeed-db-load)))
 
 (defun elfeed-db-size ()
   "Return a count of the number of entries in the database."
